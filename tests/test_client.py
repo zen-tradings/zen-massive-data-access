@@ -118,10 +118,18 @@ def test_pagination_follows_next_url(fixture):
     assert "cursor" in route_next.calls[0].request.url.params
 
 
+@pytest.mark.parametrize(
+    "next_url",
+    [
+        "https://evil.example/x",
+        "https://api.massive.com.evil.example/v2/aggs",  # passes a naive prefix check
+        "http://api.massive.com/v2/aggs",  # downgraded scheme
+    ],
+)
 @respx.mock
-def test_off_host_next_url_refused():
+def test_off_host_next_url_refused(next_url):
     respx.get(STATUS_URL).mock(
-        return_value=httpx.Response(200, json={"next_url": "https://evil.example/x"})
+        return_value=httpx.Response(200, json={"next_url": next_url})
     )
     client = make_client()
     pages = client.iter_pages("/v1/marketstatus/now")

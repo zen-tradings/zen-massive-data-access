@@ -101,7 +101,10 @@ class MassiveClient:
     # -- internals --------------------------------------------------------
 
     def _validated_next_url(self, next_url: str) -> str:
-        if not next_url.startswith(self._base_url):
+        # Compare scheme+host exactly: a prefix check would accept e.g.
+        # https://api.massive.com.evil.com and leak the bearer token to it.
+        url, base = httpx.URL(next_url), httpx.URL(self._base_url)
+        if (url.scheme, url.host, url.port) != (base.scheme, base.host, base.port):
             raise MassiveAPIError(f"refusing to follow off-host next_url: {next_url!r}")
         return next_url
 

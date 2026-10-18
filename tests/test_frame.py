@@ -44,6 +44,11 @@ def full(base: float) -> dict[str, float]:
     return {d: base + i for i, d in enumerate(SESSIONS)}
 
 
+def mock_calendar() -> respx.Route:
+    """SPY (default calendar symbol) with every session present."""
+    return mock_symbol("SPY", full(470))
+
+
 # -- last_complete_session_date ---------------------------------------------
 
 
@@ -67,6 +72,7 @@ def test_cutoff_converts_from_utc():
 
 @respx.mock
 def test_build_closes_shape_and_index(fast_client):
+    mock_calendar()
     mock_symbol("SMH", full(100))
     mock_symbol("QQQ", full(400))
 
@@ -84,6 +90,7 @@ def test_build_closes_shape_and_index(fast_client):
 
 @respx.mock
 def test_request_window_ends_at_last_complete_session(fast_client):
+    mock_calendar()
     route = mock_symbol("SMH", full(100))
     during_session = dt.datetime(2024, 1, 11, 11, 0, tzinfo=NY)
 
@@ -96,6 +103,7 @@ def test_request_window_ends_at_last_complete_session(fast_client):
 
 @respx.mock
 def test_explicit_end_is_capped_by_cutoff(fast_client):
+    mock_calendar()
     route = mock_symbol("SMH", full(100))
     build_closes(fast_client, ["SMH"], 5, end=dt.date(2030, 1, 1), now=AFTER_CLOSE)
     assert route.calls[0].request.url.path.endswith("/2024-01-06/2024-01-11")
@@ -103,6 +111,7 @@ def test_explicit_end_is_capped_by_cutoff(fast_client):
 
 @respx.mock
 def test_small_gap_warns_and_drops_row(fast_client, caplog):
+    mock_calendar()
     mock_symbol("SMH", full(100))
     gappy = full(400)
     del gappy["2024-01-09"]
@@ -120,6 +129,7 @@ def test_small_gap_warns_and_drops_row(fast_client, caplog):
 
 @respx.mock
 def test_too_many_missing_raises(fast_client):
+    mock_calendar()
     mock_symbol("SMH", full(100))
     mock_symbol("QQQ", {"2024-01-11": 404.0})
     with pytest.raises(MissingDataError, match="QQQ=4/5"):
@@ -137,11 +147,59 @@ def test_no_bars_raises(fast_client):
 
 @respx.mock
 def test_nonpositive_close_raises(fast_client):
+    mock_calendar()
     bad = full(100)
     bad["2024-01-08"] = 0.0
     mock_symbol("SMH", bad)
     with pytest.raises(MissingDataError, match="nonpositive"):
         build_closes(fast_client, ["SMH"], 30, now=AFTER_CLOSE)
+
+
+@respx.mock
+def test_single_symbol_gap_detected_via_calendar_symbol(fast_client, caplog):
+    mock_calendar()
+    gappy = full(100)
+    del gappy["2024-01-09"]
+    mock_symbol("SMH", gappy)
+
+    with caplog.at_level(logging.WARNING):
+        closes = build_closes(
+            fast_client, ["SMH"], 30, max_missing_fraction=0.25, now=AFTER_CLOSE
+        )
+
+    assert list(closes.columns) == ["SMH"]  # SPY only defines the days
+    assert pd.Timestamp("2024-01-09") not in closes.index
+    assert "SMH=1" in caplog.text
+
+
+@respx.mock
+def test_without_calendar_symbol_single_symbol_gap_is_invisible(fast_client):
+    gappy = full(100)
+    del gappy["2024-01-09"]
+    mock_symbol("SMH", gappy)
+    closes = build_closes(fast_client, ["SMH"], 30, calendar_symbol=None, now=AFTER_CLOSE)
+    assert len(closes) == 4  # documented limitation of calendar_symbol=None
+
+
+@respx.mock
+def test_calendar_symbol_in_request_is_not_fetched_twice(fast_client):
+    spy = mock_calendar()
+    closes = build_closes(fast_client, ["SPY"], 30, now=AFTER_CLOSE)
+    assert spy.call_count == 1
+    assert list(closes.columns) == ["SPY"]
+
+
+@respx.mock
+def test_stale_latest_session_warns(fast_client, caplog):
+    stale = {d: 1.0 + i for i, d in enumerate(SESSIONS[:-1])}  # no 2024-01-11 bar yet
+    mock_symbol("SPY", stale)
+    mock_symbol("SMH", stale)
+
+    with caplog.at_level(logging.WARNING):
+        closes = build_closes(fast_client, ["SMH"], 30, now=AFTER_CLOSE)
+
+    assert closes.index[-1] == pd.Timestamp("2024-01-10")
+    assert "expected 2024-01-11" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -177,6 +235,7 @@ def test_write_refuses_empty(tmp_path):
 
 @respx.mock
 def test_cli_closes_writes_parquet(monkeypatch, tmp_path, capsys):
+    mock_calendar()
     monkeypatch.setenv("MASSIVE_API_KEY", "test-key")
     monkeypatch.setattr(
         "massive_access.frame.last_complete_session_date", lambda *_a, **_k: dt.date(2024, 1, 11)
@@ -198,6 +257,13 @@ def test_cli_status_error_in_200_body_exits_cleanly(monkeypatch, capsys):
     )
     assert cli_main(["closes", "SMH"]) == 1
     assert "bad ticker" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argv", [["SMH", "--lookback-days", "0"], ["SMH", "smh"]])
+def test_cli_bad_arguments_exit_cleanly(monkeypatch, capsys, argv):
+    monkeypatch.setenv("MASSIVE_API_KEY", "test-key")
+    assert cli_main(["closes", *argv]) == 1
+    assert capsys.readouterr().err.startswith("error:")
 
 
 def test_cli_missing_key_exits_nonzero(monkeypatch, capsys):

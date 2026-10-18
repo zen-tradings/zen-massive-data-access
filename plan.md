@@ -32,14 +32,19 @@ Alpaca can keep doing that.)
 
 ## 2. Output contract (simple)
 
-`build_closes(client, symbols, lookback_days, *, end=None, max_missing_fraction=0.02)`
+`build_closes(client, symbols, lookback_days, *, end=None, max_missing_fraction=0.02,
+calendar_symbol="SPY")`
 returns a `pd.DataFrame`:
 
 - tz-naive, midnight-normalized, unique, ascending `DatetimeIndex` named `date`
 - one column per requested symbol, in the order requested
 - daily closes from Massive aggregates with `adjusted=true`
 - **completed sessions only**: before 16:30 ET, today's bar is excluded
-- **trading days = dates Massive returns bars for** (no separate calendar)
+- **trading days = dates the reference symbol (SPY) has bars for** (no separate
+  calendar). Using a reference rather than the requested symbols means a gap is
+  detectable even for a single symbol, or a day missing from all of them
+- if the latest session is older than the expected one on a weekday → warning
+  (data not published yet, or a holiday)
 - missing data: per symbol, `missing / total sessions > max_missing_fraction` →
   `MissingDataError`; below that → logged warning and incomplete rows dropped.
   Values are never forward-filled
@@ -91,6 +96,8 @@ Auth via `Authorization: Bearer` header.
       check dividend handling on XLU/XLE around ex-dates (Massive documents
       `adjusted` as split adjustment — confirm whether dividends are included before
       relying on it for total-return-sensitive signals)
+- [ ] Confirm with a real key that the daily bar is final by 16:30 ET
+- [ ] Optional `min_sessions` guard (PPO needs ≥ 200 sessions)
 - [ ] Optional incremental cache (append new sessions to one parquet per symbol)
       if multi-year pulls become slow or hit rate limits
 

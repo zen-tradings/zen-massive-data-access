@@ -1,7 +1,8 @@
 """Daily adjusted close frames for daily / multi-day strategies.
 
 Intentionally simple:
-- the trading days are the dates Massive returns bars for (no session calendar)
+- the trading days are the dates a liquid reference symbol (SPY by default)
+  has bars for, so a gap in any requested symbol is detectable (no calendar)
 - today's bar is dropped until the session is over (``complete_after`` ET)
 - missing data is counted per symbol; too much → ``MissingDataError``,
   a little → warning, and incomplete rows are dropped (never forward-filled)
@@ -57,6 +58,7 @@ def build_closes(
     *,
     end: dt.date | None = None,
     max_missing_fraction: float = 0.02,
+    calendar_symbol: str | None = "SPY",
     now: dt.datetime | None = None,
 ) -> pd.DataFrame:
     """Daily adjusted closes for ``symbols`` over the last ``lookback_days``
@@ -65,6 +67,10 @@ def build_closes(
     Returns a DataFrame with a tz-naive, midnight-normalized, ascending
     ``DatetimeIndex`` (named ``date``) and one column per symbol, in the order
     given. Contains no NaN and only positive prices.
+
+    Trading days are the dates ``calendar_symbol`` has bars for (fetched once
+    extra if not among ``symbols``). ``None`` falls back to the union of the
+    requested symbols' dates, which cannot detect a day missing from all of them.
     """
     if not symbols:
         raise ValueError("symbols must not be empty")
@@ -77,22 +83,13 @@ def build_closes(
     end = min(end, cutoff) if end is not None else cutoff
     start = end - dt.timedelta(days=lookback_days)
 
-    series: dict[str, pd.Series] = {}
-    for symbol in symbols:
-        resp = get_daily_bars(client, symbol, start, end, adjusted=True)
-        if not resp.results:
-            raise MissingDataError(f"{symbol}: no daily bars between {start} and {end}")
-        index = (
-            pd.to_datetime([bar.t for bar in resp.results], unit="ms", utc=True)
-            .tz_convert(NY)
-            .tz_localize(None)
-            .normalize()
-        )
-        s = pd.Series([bar.c for bar in resp.results], index=index, name=symbol, dtype=float)
-        s = s[~s.index.duplicated(keep="last")]
-        series[symbol] = s[s.index.date <= end]  # belt and braces vs. the cutoff
-
+    series = {sym: _fetch_closes(client, sym, start, end) for sym in symbols}
     closes = pd.DataFrame(series).sort_index()
+    if calendar_symbol is not None:
+        ref = series.get(calendar_symbol)
+        if ref is None:
+            ref = _fetch_closes(client, calendar_symbol, start, end)
+        closes = closes.reindex(ref.index)
     closes.index.name = "date"
 
     bad = closes.le(0) & closes.notna()
@@ -110,7 +107,32 @@ def build_closes(
         logger.warning("dropping sessions with missing closes (%s)", detail)
         closes = closes.dropna()
 
+    last = closes.index[-1].date()
+    if last < end and end.weekday() < 5:
+        logger.warning(
+            "latest session is %s, expected %s (fine if %s was a market holiday; "
+            "otherwise the data may not be published yet)", last, end, end,
+        )
     return closes
+
+
+def _fetch_closes(
+    client: MassiveClient, symbol: str, start: dt.date, end: dt.date
+) -> pd.Series:
+    """Daily adjusted closes for one symbol, indexed by session date (tz-naive)."""
+    resp = get_daily_bars(client, symbol, start, end, adjusted=True)
+    if not resp.results:
+        raise MissingDataError(f"{symbol}: no daily bars between {start} and {end}")
+    # Daily bar ``t`` is the session's midnight in New York time.
+    index = (
+        pd.to_datetime([bar.t for bar in resp.results], unit="ms", utc=True)
+        .tz_convert(NY)
+        .tz_localize(None)
+        .normalize()
+    )
+    s = pd.Series([bar.c for bar in resp.results], index=index, name=symbol, dtype=float)
+    s = s[~s.index.duplicated(keep="last")]
+    return s[s.index.date <= end]  # belt and braces vs. the cutoff
 
 
 def write_closes(closes: pd.DataFrame, out_dir: str | Path, *, name: str = "closes") -> Path:

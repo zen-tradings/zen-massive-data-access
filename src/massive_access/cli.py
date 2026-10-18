@@ -34,6 +34,11 @@ def _parser() -> argparse.ArgumentParser:
         help="max missing fraction per symbol (default 0.02)",
     )
     c.add_argument(
+        "--calendar-symbol",
+        default="SPY",
+        help="symbol whose bars define the trading days (default SPY; 'none' to disable)",
+    )
+    c.add_argument(
         "--out", help="directory for closes_YYYYMMDD.parquet + closes_latest.parquet"
     )
     return p
@@ -42,6 +47,8 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # one INFO line per request
+    calendar_symbol = args.calendar_symbol.upper()
     try:
         with MassiveClient() as client:
             closes = build_closes(
@@ -50,8 +57,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.lookback_days,
                 end=args.end,
                 max_missing_fraction=args.max_missing,
+                calendar_symbol=None if calendar_symbol == "NONE" else calendar_symbol,
             )
-    except MassiveError as exc:
+    except (MassiveError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

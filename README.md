@@ -34,7 +34,10 @@ column per symbol:
 
 - adjusted closes (`adjusted=true`), completed sessions only (today is excluded
   before 16:30 ET)
-- trading days are the dates Massive has bars for
+- trading days are the dates SPY has bars for (`calendar_symbol`, CLI
+  `--calendar-symbol`), so a gap in any requested symbol is caught
+- a warning is logged if the latest session is older than expected (data not
+  published yet, or a holiday)
 - small gaps → warning and those rows are dropped; more than
   `max_missing_fraction` (default 2%) missing for a symbol → `MissingDataError`.
   Never forward-filled
