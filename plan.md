@@ -126,15 +126,21 @@ Key decisions
 ## 4. Phase plan
 
 ### Phase 0 — Scaffolding
-- [ ] pyproject, package layout, ruff + pytest + CI
-- [ ] Env-var config: `MASSIVE_API_KEY` required; clear error listing the signup
+- [x] pyproject, package layout, ruff + pytest + CI
+- [x] Env-var config: `MASSIVE_API_KEY` required; clear error listing the signup
       hint if missing/401
 
 ### Phase 1 — Client + core endpoints
-- [ ] `client.py`: retry/backoff (429/5xx), pagination, timeouts, request logging
-- [ ] Stocks aggregates (daily bars, `adjusted=true`), last-NBBO-quote, market-status,
+- [x] `client.py`: retry/backoff (429/5xx), pagination, timeouts, request logging
+- [x] Stocks aggregates (daily bars, `adjusted=true`), last-NBBO-quote, market-status,
       market-holidays
-- [ ] Tests with recorded fixtures
+- [x] Tests with recorded fixtures
+
+Note (verified against live api.massive.com + docs): Massive's API is Polygon-compatible
+except the last-quote route, which is **`/v2/last/nbbo/{ticker}`** (Polygon used
+`/v2/last-quote/stocks/{ticker}`). Auth works as `Authorization: Bearer` header or
+`apiKey` query param; error/envelope format is identical
+to Polygon (`{"status":..., "request_id":..., "error":...}`).
 
 ### Phase 2 — Contract frame
 - [ ] `calendar.py`: derive sessions; unit tests incl. early-close days, holidays

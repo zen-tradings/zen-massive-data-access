@@ -1,0 +1,16 @@
+[
+  {
+    "date": "2020-11-26",
+    "exchange": "NYSE",
+    "name": "Thanksgiving",
+    "status": "closed"
+  },
+  {
+    "close": "1:00 PM",
+    "open": "9:30 AM",
+    "date": "2020-11-27",
+    "exchange": "NYSE",
+    "name": "Thanksgiving",
+    "status": "early-close"
+  }
+]

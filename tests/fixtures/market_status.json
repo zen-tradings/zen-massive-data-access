@@ -1,0 +1,26 @@
+{
+  "afterHours": true,
+  "currencies": {
+    "crypto": "open",
+    "fx": "open"
+  },
+  "earlyHours": false,
+  "exchanges": {
+    "nasdaq": "extended-hours",
+    "nyse": "extended-hours",
+    "otc": "closed"
+  },
+  "indicesGroups": {
+    "cccy": "open",
+    "cgi": "closed",
+    "dow_jones": "closed",
+    "msci": "closed",
+    "mstar": "closed",
+    "mstarc": "closed",
+    "nasdaq": "closed",
+    "s_and_p": "closed",
+    "societe_generale": "closed"
+  },
+  "market": "extended-hours",
+  "serverTime": "2020-11-10T17:37:37-05:00"
+}
