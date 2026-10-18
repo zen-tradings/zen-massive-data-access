@@ -26,6 +26,11 @@ SOXX/XLK 200-day trend, QQQ 20% vol target).
 | Training (`train_ppo.py`, `walk_forward.py`) | Same adjusted daily bars, but **multi-year** history for the whole universe | Must be the *same adjustment semantics* as serving (`test_deployment_parity.py`) |
 | `options_collector` notebook | Option chains + per-session quote polling (currently Alpaca) | Later phase: replace with Massive options endpoints |
 
+There may be **many consumer services**: `rebalance@*` template workers (`baseline`,
+`ppo`, `rank-*`), `rule-based` family workers, and future families — potentially on
+separate servers. The data module must distribute to N consumers, not act as a
+library local to one strategy box.
+
 ### Frame contract (must satisfy `build_snapshot`'s validation)
 
 - `pd.DataFrame` of closes: tz-**naive** `DatetimeIndex`, midnight-normalized, unique,
@@ -58,6 +63,29 @@ SOXX/XLK 200-day trend, QQQ 20% vol target).
 - Options endpoints (phase 4, tracking `options_collector` migration)
 
 ---
+
+## 2.1 Bundle transmission (strategy servers)
+
+Consumers live on separate servers, so datasets move as **immutable bundles**, not
+API calls between services:
+
+- **Producer** (this module): after the daily pull, publishes
+  `/opt/quant-datasets/vYYYYMMDD/` — parquet frames + `manifest.json`
+  (schema version, symbol set, session range, sha256 fingerprint matching the
+  deployment `Snapshot` inputs, producer host/timestamp)
+- **Transport**: consumers **pull** with `rsync -e ssh` from the data host
+  (deploy-key, read-only, like the existing GitHub deploy key). Pull-not-push:
+  adding a server needs no producer change
+- **Install**: stage to `vYYYYMMDD.partial/`, verify manifest fingerprint against
+  the parquet just downloaded, then atomic symlink flip `current` → `vYYYYMMDD`.
+  A broken mid-transfer bundle is never consumed
+- **Ordering**: consumer timer ~15–30 min after producer timer; consumer also
+  verifies manifest fingerprint matches what `build_snapshot` computes — mismatch
+  → fail closed, keep using the previous day (matches the deployment philosophy)
+- **Live exceptions not bundled**: execution-time NBBO quotes and market clock
+  are fetched per-consumer directly (seconds-old data can't be bundled)
+- Alt transports if the topology changes: S3/object storage or read-only NFS —
+  the bundle format stays identical
 
 ## 3. Architecture
 
@@ -113,6 +141,9 @@ Key decisions
 - [ ] `frame.build_closes(symbols, as_of, lookback_days) -> DataFrame` with the exact
       contract validation rules
 - [ ] `fingerprint` for `(sessions × closes)` identical to deployment hashing inputs
+- [ ] **Bundle publishing**: immutable `dataset-vYYYYMMDD` outputs (parquet + manifest
+      + sha256 fingerprint); strategy servers pull before their timer windows, same
+      as `/opt/quant-models/ppo-vNNN` model bundles
 
 ### Phase 3 — Cache + CLI
 - [ ] Parquet cache, incremental daily update, atomic replace
@@ -142,8 +173,9 @@ Key decisions
    backfill of the training universe instead of thousands of REST calls?
 3. **Adjustment semantics** — spot-check Massive `adjusted=true` vs Alpaca `ALL`
    on dividend-heavy ETFs (XLU, XLE) around ex-dates; document deltas before cutover.
-4. Repo home: standalone PyPI-less package installed from git on the server
-   (`/opt/massive-data-access`), staying consistent with `deployment/`'s install model?
+4. Repo home: standalone PyPI-less package installed from git on its own host
+   (`/opt/massive-data-access` + `/opt/quant-datasets/`), consistent with
+   `deployment/`'s install model.
 
 ## 6. Verification
 
