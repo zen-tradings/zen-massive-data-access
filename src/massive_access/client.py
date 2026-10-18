@@ -2,9 +2,7 @@
 
 Scope: auth, timeouts, retry with jittered exponential backoff on
 429/5xx and transport errors, cursor pagination via ``next_url``, and request
-logging. This layer knows nothing about specific endpoints or timespans — that
-lives in ``massive_access.endpoints``, so future minute-bar or options frame
-builders reuse this client unchanged.
+logging. Endpoint-specific code lives in ``massive_access.endpoints``.
 """
 
 from __future__ import annotations

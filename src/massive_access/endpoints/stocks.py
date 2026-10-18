@@ -7,8 +7,10 @@ Docs: https://massive.com/docs/rest/stocks/aggregates/custom-bars
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import replace
 
 from ..client import MassiveClient
+from ..errors import MassiveAPIError
 from ..models import VALID_TIMESPANS, Aggregate, AggregateResponse, Quote
 
 DateLike = str | int | dt.date | dt.datetime
@@ -47,7 +49,7 @@ def get_aggregates(
 
     Follows cursor pagination transparently; the returned object holds the
     merged results. ``results`` is empty (not an error) when the window
-    contains no bars — callers decide whether that's a fail-closed condition.
+    contains no bars; ``build_closes`` decides whether that is an error.
     """
     if timespan not in VALID_TIMESPANS:
         raise ValueError(f"timespan must be one of {VALID_TIMESPANS}, got {timespan!r}")
@@ -70,9 +72,10 @@ def get_aggregates(
         pages += 1
         payload_status = str(page.get("status", "UNKNOWN"))
         if payload_status == "ERROR":
-            raise ValueError(
-                f"aggregates request returned status=ERROR for {ticker} "
-                f"(request_id={page.get('request_id')})"
+            raise MassiveAPIError(
+                f"aggregates request returned status=ERROR for {ticker}: "
+                f"{page.get('error', 'no detail')}",
+                request_id=page.get("request_id"),
             )
         status = payload_status
         request_id = page.get("request_id") or request_id
@@ -111,7 +114,4 @@ def get_last_quote(client: MassiveClient, ticker: str) -> Quote:
     Live data for execution-time spread checks; not used by ``build_closes``.
     """
     payload = client.get_json(f"/v2/last/nbbo/{ticker}")
-    quote = Quote.from_api(payload)
-    if isinstance(payload, dict) and payload.get("request_id"):
-        quote = Quote(**{**quote.__dict__, "request_id": payload["request_id"]})
-    return quote
+    return replace(Quote.from_api(payload), request_id=payload.get("request_id"))

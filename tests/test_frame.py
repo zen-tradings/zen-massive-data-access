@@ -190,6 +190,16 @@ def test_cli_closes_writes_parquet(monkeypatch, tmp_path, capsys):
     assert "5 sessions x 1 symbols" in capsys.readouterr().out
 
 
+@respx.mock
+def test_cli_status_error_in_200_body_exits_cleanly(monkeypatch, capsys):
+    monkeypatch.setenv("MASSIVE_API_KEY", "test-key")
+    respx.get(url__regex=AGGS.format(sym="SMH")).mock(
+        return_value=httpx.Response(200, json={"status": "ERROR", "error": "bad ticker"})
+    )
+    assert cli_main(["closes", "SMH"]) == 1
+    assert "bad ticker" in capsys.readouterr().err
+
+
 def test_cli_missing_key_exits_nonzero(monkeypatch, capsys):
     monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
     assert cli_main(["closes", "SMH"]) == 1

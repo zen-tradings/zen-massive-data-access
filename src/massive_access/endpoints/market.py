@@ -10,7 +10,7 @@ from ..client import MassiveClient
 from ..errors import MassiveAPIError
 from ..models import MarketHoliday, MarketStatus
 
-_EXCHANGES_FOR_SESSION_CALENDAR = ("NYSE", "Nasdaq")
+US_EQUITY_EXCHANGES = ("NYSE", "Nasdaq")
 
 
 def get_market_status(client: MassiveClient) -> MarketStatus:
@@ -21,7 +21,7 @@ def get_market_status(client: MassiveClient) -> MarketStatus:
 def get_market_holidays(
     client: MassiveClient,
     *,
-    exchanges: tuple[str, ...] = _EXCHANGES_FOR_SESSION_CALENDAR,
+    exchanges: tuple[str, ...] = US_EQUITY_EXCHANGES,
 ) -> list[MarketHoliday]:
     """Upcoming holidays/shortened days from /v1/marketstatus/upcoming.
 

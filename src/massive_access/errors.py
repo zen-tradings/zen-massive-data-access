@@ -1,8 +1,7 @@
 """Exception hierarchy for massive_access.
 
-No endpoint logic here; everything subclasses ``MassiveError`` so callers can
-catch the family or a specific failure mode. Per the fail-closed philosophy of
-the deployment stack, nothing in this package ever swallows an API error.
+Everything subclasses ``MassiveError`` so callers (and the CLI) can catch the
+family or a specific failure mode. API errors are never swallowed.
 """
 
 from __future__ import annotations
