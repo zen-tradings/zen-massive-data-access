@@ -1,32 +1,155 @@
-# zen-massive-data-access — Plan
+# zen-massive-data-access — Dev Plan
 
-## Goal
-Build a scalable data access layer for querying and processing massive datasets.
+A data access module on **Massive.com (ex-Polygon.io) Advanced plan** whose primary
+consumer is the strategy deployment stack in
+[deploy-quant-research-experiment](https://github.com/zen-tradings/deploy-quant-research-experiment)
+(branch `yanpan`, `deployment/` directory).
 
-## Phase 1 — Foundation
-- [ ] Define project scope and target data sources
-- [ ] Choose tech stack (language, storage, query engine)
-- [ ] Set up repo structure, CI, linting, and testing
-- [ ] Design core data access interfaces / abstractions
+Massive is **data-only** here. Brokerage concerns (account, positions, orders, market
+clock gating) stay with Alpaca; this module replaces only the market-data reads
+currently done via Alpaca IEX bars/quotes and yfinance in the training code.
 
-## Phase 2 — Core Implementation
-- [ ] Implement connectors for primary data sources
-- [ ] Add connection pooling and retry/backoff handling
-- [ ] Implement batched / streaming reads for large datasets
-- [ ] Add caching layer where appropriate
+---
 
-## Phase 3 — Scale & Performance
-- [ ] Benchmark throughput and latency
-- [ ] Add pagination, partitioning, and parallel fetch support
-- [ ] Optimize memory usage for large result sets
+## 1. What the deployment module needs (contract inputs)
 
-## Phase 4 — Hardening
-- [ ] Observability: logging, metrics, tracing
-- [ ] Error handling and failure-mode documentation
-- [ ] Security review (credentials, access control)
-- [ ] Usage documentation and examples
+Source of truth: `deployment/rebalancing/` (`alpaca.py`, `data.py`) and profiles
+(`baseline.yaml`, `ppo.yaml`, `soxl_ema20.yaml`, plus `rule-based/` strategies:
+SOXX/XLK 200-day trend, QQQ 20% vol target).
 
-## Open Questions
-- Which data sources are in scope first?
-- Read-only access layer, or read/write?
-- Expected data volume and concurrency targets?
+| Consumer | Data needed | Notes |
+|---|---|---|
+| PPO worker | Daily **adjusted** closes, ~10 ETFs (SMH, SOXX, QQQ, XLK, XLE, VDE, XOP, XLU, ITA, XPH), completed sessions only, `lookback_days` 365–730 calendar days | Fed to `build_snapshot`; min 200 sessions; NaN/missing/nonpositive → fail closed |
+| Rule-based workers | Daily adjusted closes; up to 200+ sessions (SMA200, 20-day realized vol, EMA20) | Same frame, no partial bar for today |
+| Order planner | **Latest NBBO quote** per symbol (bid/ask + timestamp) at run time | Spread/staleness checks against `risk.max_spread_fraction` / `max_quote_age_seconds` |
+| All workers | NYSE session calendar (open days, incl. half days) | Today from Alpaca `get_calendar`; Massive `market-holidays` only gives holidays, so derive sessions ourselves or keep a small static calendar |
+| Training (`train_ppo.py`, `walk_forward.py`) | Same adjusted daily bars, but **multi-year** history for the whole universe | Must be the *same adjustment semantics* as serving (`test_deployment_parity.py`) |
+| `options_collector` notebook | Option chains + per-session quote polling (currently Alpaca) | Later phase: replace with Massive options endpoints |
+
+### Frame contract (must satisfy `build_snapshot`'s validation)
+
+- `pd.DataFrame` of closes: tz-**naive** `DatetimeIndex`, midnight-normalized, unique,
+  monotonic increasing; columns exactly the requested symbols
+- Completed sessions only — the running day's bar is excluded during market hours
+- Adjusted for splits and dividends (equivalent of Alpaca `Adjustment.ALL`,
+  Massive aggregates `adjusted=true`)
+- Complete: no NaN, no nonpositive prices
+- Reproducible: same `(symbols, as_of, lookback)` → byte-identical values,
+  so the sha256 fingerprint in `Snapshot` stays stable across runs
+
+---
+
+## 2. Scope of this module
+
+**In scope**
+- Authenticated REST client (reads `MASSIVE_API_KEY` from env; never loaded from `.env` implicitly)
+- Stocks: aggregates (custom bars), daily summaries, last trade / last NBBO quote,
+  historical quotes+trades (paged), snapshots, market holidays/status, splits, dividends
+- Session calendar derivation (US equities) and canonical close-frame builder
+- Parquet cache with incremental updates (like `src/data.py` in the research repo,
+  but versioned and fingerprint-aware)
+- CLI for daily pull / backfill / verify (systemd-friendly for the Ubuntu server)
+- Parity tooling: prove Massive frames ≡ Alpaca/yfinance frames used today
+
+**Out of scope (phase 1)**
+- Order execution, account/position reads (stay with Alpaca)
+- WebSocket streaming (deployment runs daily via systemd timers; REST polling suffices)
+- Minute bars (only needed if intraday strategies arrive)
+- Options endpoints (phase 4, tracking `options_collector` migration)
+
+---
+
+## 3. Architecture
+
+```
+zen-massive-data-access/
+├── pyproject.toml                    # python 3.11/3.12; httpx, pandas, pyarrow; dev: pytest, respx, ruff
+├── src/massive_access/
+│   ├── client.py                     # REST client: retries w/ jittered backoff on 429/5xx,
+│   │                                 # pagination (next_url), timeouts, request id logging
+│   ├── endpoints/
+│   │   ├── stocks.py                 # aggregates, daily summary, last trade/quote, snapshot,
+│   │   │                             # splits, dividends
+│   │   └── market.py                 # market-holidays, market-status
+│   ├── calendar.py                   # session calendar 2004→now+1y from holidays; half-day aware
+│   ├── frame.py                      # bars → session-indexed closes DataFrame (the contract above)
+│   ├── cache.py                      # parquet store keyed by (symbol, adjusted, timeframe),
+│   │                                 # atomic write, incremental append + dedupe
+│   ├── fingerprint.py                # sha256 window fingerprint, matches deployment Snapshot
+│   └── cli.py                        # `massive-access pull|verify|calendar` commands
+├── tests/                            # respx-recorded fixtures, calendar edge cases,
+│                                     # contract tests replicating build_snapshot validation
+└── docs/
+```
+
+Key decisions
+- **`adjusted=true` from the API**, no self-adjustment in v1 — but store splits/dividends
+  alongside so we can audit adjustment-break days (ex-date → prior-day closes change →
+  fingerprint changes; expected behavior, but must be visible in logs)
+- **Fail closed**: any missing session in the window → error, never silently
+  forward-fill (matches the deployment philosophy)
+- **No partial bar**: `end` is exclusive; during an open session, today's row is dropped
+  and flagged in logs
+- Cache files under `$MASSIVE_DATA_DIR` (default `~/.cache/massive-access`,
+  `/var/lib/massive-access` on the server)
+
+---
+
+## 4. Phase plan
+
+### Phase 0 — Scaffolding
+- [ ] pyproject, package layout, ruff + pytest + CI
+- [ ] Env-var config: `MASSIVE_API_KEY` required; clear error listing the signup
+      hint if missing/401
+
+### Phase 1 — Client + core endpoints
+- [ ] `client.py`: retry/backoff (429/5xx), pagination, timeouts, request logging
+- [ ] Stocks aggregates (daily bars, `adjusted=true`), last-NBBO-quote, market-status,
+      market-holidays
+- [ ] Tests with recorded fixtures
+
+### Phase 2 — Contract frame
+- [ ] `calendar.py`: derive sessions; unit tests incl. early-close days, holidays
+- [ ] `frame.build_closes(symbols, as_of, lookback_days) -> DataFrame` with the exact
+      contract validation rules
+- [ ] `fingerprint` for `(sessions × closes)` identical to deployment hashing inputs
+
+### Phase 3 — Cache + CLI
+- [ ] Parquet cache, incremental daily update, atomic replace
+- [ ] `massive-access pull` (daily refresh), `verify --as-of DATE` (rebuilds and
+      fingerprints today's window), `backfill --years N`
+- [ ] systemd timer/service snippets mirroring `deployment/ops/`
+
+### Phase 4 — Parity & integration
+- [ ] Run Alpaca-IEX and Massive pulls for the profile universes; report per-session
+      close deltas (expected: small; decisions documented, esp. corporate actions)
+- [ ] Adapter doc + example: swap-in function returning `(closes, quotes)` with the
+      same signature semantics as `rebalancing/alpaca.py` paper reads
+- [ ] Feasibility note: consolidating Alpaca data + Massive in deployment `data_source` config
+
+### Phase 5 — Options (later)
+- [ ] Options contracts + chain snapshot + quote polling to replace Alpaca in
+      `options_collector`
+
+---
+
+## 5. Open questions
+
+1. **Quote latency on Advanced plan** — confirm the entitlement window for NBBO
+   (`last-quote`) during market hours; the risk checks (`max_quote_age_seconds`,
+   `max_spread_fraction`) need genuinely fresh quotes.
+2. **Flat Files (S3)** — Advanced includes bulk files; use them for multi-year
+   backfill of the training universe instead of thousands of REST calls?
+3. **Adjustment semantics** — spot-check Massive `adjusted=true` vs Alpaca `ALL`
+   on dividend-heavy ETFs (XLU, XLE) around ex-dates; document deltas before cutover.
+4. Repo home: standalone PyPI-less package installed from git on the server
+   (`/opt/massive-data-access`), staying consistent with `deployment/`'s install model?
+
+## 6. Verification
+
+- `pytest` green incl. contract tests that import `build_snapshot`'s validation rules
+  as fixtures
+- `massive-access verify` reproduces the deployment fingerprint for a fixed
+  `(symbols, as_of)` on two different machines
+- 30-day shadow run: Massive frames vs Alpaca frames; zero fail-closed events caused
+  by the data layer
