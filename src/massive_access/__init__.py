@@ -1,8 +1,7 @@
 """massive_access — data access on the Massive.com (ex-Polygon.io) REST API.
 
-Phase 0/1 surface: authenticated client + core stock/market endpoints.
-Strategy-neutral: contract frames, session calendar, and bundle publishing
-(Phase 2+) build on top of this module.
+Scope: daily / multi-day strategies run after the close. Authenticated client,
+core stock/market endpoints, and a daily adjusted close frame builder.
 """
 
 from .client import MassiveClient
@@ -14,6 +13,13 @@ from .errors import (
     MassiveAuthError,
     MassiveError,
     MissingAPIKeyError,
+)
+from .frame import (
+    MissingDataError,
+    build_closes,
+    last_complete_session_date,
+    read_closes,
+    write_closes,
 )
 from .models import (
     Aggregate,
@@ -35,12 +41,17 @@ __all__ = [
     "MassiveClient",
     "MassiveError",
     "MissingAPIKeyError",
+    "MissingDataError",
     "Quote",
     "__version__",
+    "build_closes",
     "get_aggregates",
     "get_api_key",
     "get_daily_bars",
     "get_last_quote",
     "get_market_holidays",
     "get_market_status",
+    "last_complete_session_date",
+    "read_closes",
+    "write_closes",
 ]

@@ -1,4 +1,4 @@
-"""Stocks endpoints (Phase 1): aggregates (custom bars) and last NBBO quote.
+"""Stocks endpoints: aggregates (custom bars) and last NBBO quote.
 
 Docs: https://massive.com/docs/rest/stocks/aggregates/custom-bars
       https://massive.com/docs/rest/stocks/trades-quotes/last-quote
@@ -98,7 +98,7 @@ def get_daily_bars(
     adjusted: bool = True,
 ) -> AggregateResponse:
     """Daily bars for one ticker. Note ``to`` is inclusive on the API side —
-    excluding the running session is the contract-frame builder's job (Phase 2).
+    excluding the running session is ``frame.build_closes``'s job.
     """
     return get_aggregates(
         client, ticker, from_, to, multiplier=1, timespan="day", adjusted=adjusted
@@ -108,7 +108,7 @@ def get_daily_bars(
 def get_last_quote(client: MassiveClient, ticker: str) -> Quote:
     """Latest NBBO (bid/ask) quote for one ticker.
 
-    Execution-time data: seconds-old, fetched per-consumer, never bundled.
+    Live data for execution-time spread checks; not used by ``build_closes``.
     """
     payload = client.get_json(f"/v2/last/nbbo/{ticker}")
     quote = Quote.from_api(payload)

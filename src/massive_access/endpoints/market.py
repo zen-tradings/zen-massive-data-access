@@ -1,4 +1,4 @@
-"""Market operations endpoints (Phase 1): market status and market holidays.
+"""Market operations endpoints: market status and market holidays.
 
 Docs: https://massive.com/docs/rest/stocks/market-operations/market-status
       https://massive.com/docs/rest/stocks/market-operations/market-holidays
@@ -25,9 +25,9 @@ def get_market_holidays(
 ) -> list[MarketHoliday]:
     """Upcoming holidays/shortened days from /v1/marketstatus/upcoming.
 
-    The endpoint only returns up to a few upcoming notable days; it is the
-    input for deriving our own session calendar (Phase 2), filtered to the
-    cash-equities exchanges by default.
+    The endpoint only returns a few upcoming notable days, filtered to the
+    cash-equities exchanges by default. Informational: ``build_closes`` uses
+    the dates Massive has bars for as the trading days.
     """
     payload = client.get_json("/v1/marketstatus/upcoming")
     if not isinstance(payload, list):

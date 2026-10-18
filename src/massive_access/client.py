@@ -1,6 +1,6 @@
 """Authenticated HTTP client for the Massive REST API.
 
-Scope (Phase 1): auth, timeouts, retry with jittered exponential backoff on
+Scope: auth, timeouts, retry with jittered exponential backoff on
 429/5xx and transport errors, cursor pagination via ``next_url``, and request
 logging. This layer knows nothing about specific endpoints or timespans — that
 lives in ``massive_access.endpoints``, so future minute-bar or options frame

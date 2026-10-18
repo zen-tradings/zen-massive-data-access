@@ -14,5 +14,6 @@ dist/
 .ruff_cache/
 .mypy_cache/
 
-# Data cache (Phase 3)
-.cache/massive-access/
+# Local data output
+*.parquet
+*.parquet.tmp
