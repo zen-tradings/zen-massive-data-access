@@ -69,7 +69,9 @@ Run from cron/systemd after the close (e.g. 17:00 ET on weekdays).
 ```
 src/massive_access/
 ├── client.py            # REST client: Bearer auth, retry/backoff (429/5xx), next_url pagination
-├── config.py            # MASSIVE_API_KEY from env (never from .env implicitly)
+├── config.py            # API key: explicit arg > MASSIVE_API_KEY env > key file
+│                         # ($MASSIVE_CONFIG_FILE, ~/.config/massive-access/key,
+│                         #  /etc/massive-access/key; never from a repo .env)
 ├── errors.py
 ├── models.py            # Aggregate, Quote, MarketStatus, MarketHoliday
 ├── endpoints/

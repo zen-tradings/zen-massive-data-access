@@ -11,6 +11,7 @@ import logging
 import sys
 
 from .client import MassiveClient
+from .config import find_api_key
 from .errors import MassiveError
 from .frame import build_closes, write_closes
 
@@ -41,13 +42,25 @@ def _parser() -> argparse.ArgumentParser:
     c.add_argument(
         "--out", help="directory for closes_YYYYMMDD.parquet + closes_latest.parquet"
     )
+    sub.add_parser("key", help="show where the API key resolves from (never the key)")
     return p
+
+
+def _cmd_key() -> int:
+    key, source = find_api_key()
+    if not key:
+        print("no API key found (env var or key file)", file=sys.stderr)
+        return 1
+    print(f"API key found via {source}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # one INFO line per request
+    if args.command == "key":
+        return _cmd_key()
     calendar_symbol = args.calendar_symbol.upper()
     try:
         with MassiveClient() as client:

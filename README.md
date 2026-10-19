@@ -4,9 +4,23 @@ Daily adjusted close data from **Massive.com (ex-Polygon.io)** for daily / multi
 rebalancing strategies that run after the close. Massive is **data-only**: brokerage
 and execution stay with Alpaca. Design and scope: `plan.md`.
 
-## Usage
+## Setup
 
-`MASSIVE_API_KEY` must be set in the environment.
+The API key is resolved in order: explicit argument → `MASSIVE_API_KEY` env var →
+key file. The key file lives outside this repo:
+
+```bash
+mkdir -p ~/.config/massive-access
+# either just the key on one line, or MASSIVE_API_KEY=<key> (EnvironmentFile style)
+echo 'mk_your_key_here' > ~/.config/massive-access/key
+chmod 600 ~/.config/massive-access/key
+```
+
+Locations checked, in order: `$MASSIVE_CONFIG_FILE`,
+`~/.config/massive-access/key`, `/etc/massive-access/key` (server).
+`massive-access key` shows where the key resolved from (never the key itself).
+
+## Usage
 
 ### CLI
 
