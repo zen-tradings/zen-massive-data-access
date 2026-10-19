@@ -62,7 +62,8 @@ protocol beyond that.
 massive-access closes SMH SOXX QQQ XLK --lookback-days 730 --out /var/lib/massive-access
 ```
 
-Run from cron/systemd after the close (e.g. 17:00 ET on weekdays).
+Run via the systemd timer in `deploy/` (weekdays 17:00 America/New_York, retries on
+failure, `--fail-on-stale --min-sessions 200`); see README "Deploy".
 
 ## 4. Layout
 
@@ -88,6 +89,8 @@ src/massive_access/
 - [x] Phase 1: `MassiveClient`, aggregates (`adjusted=true`), last NBBO quote,
       market status/holidays, tests with recorded fixtures
 - [x] Phase 2 (simplified): `build_closes` + `write_closes` + `massive-access closes`
+- [x] Phase 3: deployable — `min_sessions`, `on_stale="raise"` + holiday cache,
+      systemd service/timer, `deploy/install.sh`, hash-pinned `deploy/requirements.lock`
 
 API note (checked against live api.massive.com + docs): Polygon-compatible, except
 last quote is **`/v2/last/nbbo/{ticker}`** (not Polygon's `/v2/last-quote/stocks/...`).
@@ -99,7 +102,6 @@ Auth via `Authorization: Bearer` header.
       `adjusted` as split adjustment — confirm whether dividends are included before
       relying on it for total-return-sensitive signals)
 - [ ] Confirm with a real key that the daily bar is final by 16:30 ET
-- [ ] Optional `min_sessions` guard (PPO needs ≥ 200 sessions)
 - [ ] Optional incremental cache (append new sessions to one parquet per symbol)
       if multi-year pulls become slow or hit rate limits
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 
 import httpx
@@ -10,6 +11,7 @@ import respx
 
 from massive_access import (
     MissingDataError,
+    StaleDataError,
     build_closes,
     last_complete_session_date,
     read_closes,
@@ -202,6 +204,40 @@ def test_stale_latest_session_warns(fast_client, caplog):
     assert "expected 2024-01-11" in caplog.text
 
 
+def mock_stale() -> None:
+    stale = {d: 1.0 + i for i, d in enumerate(SESSIONS[:-1])}  # no 2024-01-11 bar
+    mock_symbol("SPY", stale)
+    mock_symbol("SMH", stale)
+
+
+@respx.mock
+def test_stale_raises_when_asked(fast_client):
+    mock_stale()
+    with pytest.raises(StaleDataError, match="expected 2024-01-11"):
+        build_closes(fast_client, ["SMH"], 30, on_stale="raise", now=AFTER_CLOSE)
+
+
+@respx.mock
+def test_stale_on_known_holiday_is_fine(fast_client, caplog):
+    mock_stale()
+    with caplog.at_level(logging.WARNING):
+        closes = build_closes(
+            fast_client, ["SMH"], 30, on_stale="raise",
+            closed_dates={dt.date(2024, 1, 11)}, now=AFTER_CLOSE,
+        )
+    assert closes.index[-1] == pd.Timestamp("2024-01-10")
+    assert "expected" not in caplog.text
+
+
+@respx.mock
+def test_min_sessions(fast_client):
+    mock_calendar()
+    mock_symbol("SMH", full(100))
+    assert len(build_closes(fast_client, ["SMH"], 30, min_sessions=5, now=AFTER_CLOSE)) == 5
+    with pytest.raises(MissingDataError, match="only 5 sessions, need >= 6"):
+        build_closes(fast_client, ["SMH"], 30, min_sessions=6, now=AFTER_CLOSE)
+
+
 @pytest.mark.parametrize(
     ("symbols", "lookback"), [([], 30), (["SMH", "SMH"], 30), (["SMH"], 0)]
 )
@@ -268,5 +304,65 @@ def test_cli_bad_arguments_exit_cleanly(monkeypatch, capsys, argv):
 
 def test_cli_missing_key_exits_nonzero(monkeypatch, capsys):
     monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    # Ignore real key files (~/.config/..., /etc/...) so this never hits the network.
+    monkeypatch.setattr("massive_access.config.key_file_candidates", lambda: [])
     assert cli_main(["closes", "SMH"]) == 1
     assert "MASSIVE_API_KEY" in capsys.readouterr().err
+
+
+HOLIDAYS = r"https://api\.massive\.com/v1/marketstatus/upcoming"
+
+
+@pytest.fixture
+def cli_env(monkeypatch):
+    monkeypatch.setenv("MASSIVE_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "massive_access.frame.last_complete_session_date", lambda *_a, **_k: dt.date(2024, 1, 11)
+    )
+
+
+@respx.mock
+def test_cli_fail_on_stale_exits_1_and_writes_nothing(cli_env, tmp_path, capsys):
+    mock_stale()
+    respx.get(url__regex=HOLIDAYS).mock(return_value=httpx.Response(200, json=[]))
+
+    rc = cli_main(["closes", "SMH", "--fail-on-stale", "--out", str(tmp_path)])
+
+    assert rc == 1
+    assert "expected 2024-01-11" in capsys.readouterr().err
+    assert not list(tmp_path.glob("*.parquet"))
+
+
+@respx.mock
+def test_cli_holiday_cache_remembers_past_upcoming_days(cli_env, tmp_path):
+    mock_stale()
+    # day before: the endpoint lists the holiday as upcoming -> cached
+    (tmp_path / "market_holidays.json").write_text(json.dumps(["2024-01-11"]))
+    # on the day itself the endpoint no longer lists it
+    respx.get(url__regex=HOLIDAYS).mock(return_value=httpx.Response(200, json=[]))
+
+    rc = cli_main(["closes", "SMH", "--fail-on-stale", "--out", str(tmp_path)])
+
+    assert rc == 0
+    assert (tmp_path / "closes_20240110.parquet").exists()
+
+
+@respx.mock
+def test_cli_holiday_cache_is_updated(cli_env, tmp_path):
+    mock_calendar()
+    mock_symbol("SMH", full(100))
+    respx.get(url__regex=HOLIDAYS).mock(return_value=httpx.Response(200, json=[
+        {"date": "2024-01-15", "exchange": "NYSE", "name": "MLK", "status": "closed"},
+        {"date": "2024-01-16", "exchange": "NYSE", "name": "x", "status": "early-close"},
+        {"date": "2024-01-17", "exchange": "NASDAQ", "name": "x", "status": "closed"},
+    ]))
+
+    assert cli_main(["closes", "SMH", "--fail-on-stale", "--out", str(tmp_path)]) == 0
+    assert json.loads((tmp_path / "market_holidays.json").read_text()) == ["2024-01-15"]
+
+
+@respx.mock
+def test_cli_holiday_fetch_failure_falls_back_to_stale_check(cli_env, tmp_path, capsys):
+    mock_stale()
+    respx.get(url__regex=HOLIDAYS).mock(return_value=httpx.Response(404, json={}))
+    assert cli_main(["closes", "SMH", "--fail-on-stale", "--out", str(tmp_path)]) == 1

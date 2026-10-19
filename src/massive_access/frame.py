@@ -13,8 +13,9 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import os
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -33,7 +34,11 @@ DEFAULT_COMPLETE_AFTER = dt.time(16, 30)
 
 
 class MissingDataError(MassiveError):
-    """A symbol has no bars, or more missing sessions than allowed."""
+    """A symbol has no bars, more missing sessions than allowed, or too few sessions."""
+
+
+class StaleDataError(MassiveError):
+    """The latest session is older than expected (``on_stale="raise"``)."""
 
 
 def last_complete_session_date(
@@ -59,6 +64,9 @@ def build_closes(
     end: dt.date | None = None,
     max_missing_fraction: float = 0.02,
     calendar_symbol: str | None = "SPY",
+    min_sessions: int | None = None,
+    on_stale: Literal["warn", "raise"] = "warn",
+    closed_dates: Collection[dt.date] = (),
     now: dt.datetime | None = None,
 ) -> pd.DataFrame:
     """Daily adjusted closes for ``symbols`` over the last ``lookback_days``
@@ -71,6 +79,11 @@ def build_closes(
     Trading days are the dates ``calendar_symbol`` has bars for (fetched once
     extra if not among ``symbols``). ``None`` falls back to the union of the
     requested symbols' dates, which cannot detect a day missing from all of them.
+
+    ``min_sessions``: raise ``MissingDataError`` if fewer sessions remain.
+    ``on_stale``: if the latest session is older than ``end`` on a weekday,
+    log a warning (default) or raise ``StaleDataError``. Dates in
+    ``closed_dates`` (market holidays) are never considered stale.
     """
     if not symbols:
         raise ValueError("symbols must not be empty")
@@ -78,6 +91,8 @@ def build_closes(
         raise ValueError(f"duplicate symbols: {list(symbols)}")
     if lookback_days < 1:
         raise ValueError(f"lookback_days must be >= 1, got {lookback_days}")
+    if on_stale not in ("warn", "raise"):
+        raise ValueError(f"on_stale must be 'warn' or 'raise', got {on_stale!r}")
 
     cutoff = last_complete_session_date(now)
     end = min(end, cutoff) if end is not None else cutoff
@@ -107,12 +122,23 @@ def build_closes(
         logger.warning("dropping sessions with missing closes (%s)", detail)
         closes = closes.dropna()
 
-    last = closes.index[-1].date()
-    if last < end and end.weekday() < 5:
-        logger.warning(
-            "latest session is %s, expected %s (fine if %s was a market holiday; "
-            "otherwise the data may not be published yet)", last, end, end,
+    if closes.empty:
+        raise MissingDataError(f"no complete sessions between {start} and {end}")
+    if min_sessions is not None and len(closes) < min_sessions:
+        raise MissingDataError(
+            f"only {len(closes)} sessions, need >= {min_sessions} "
+            f"(increase lookback_days?)"
         )
+
+    last = closes.index[-1].date()
+    if last < end and end.weekday() < 5 and end not in closed_dates:
+        msg = (
+            f"latest session is {last}, expected {end} (fine if {end} was a market "
+            "holiday; otherwise the data may not be published yet)"
+        )
+        if on_stale == "raise":
+            raise StaleDataError(msg)
+        logger.warning(msg)
     return closes
 
 

@@ -16,6 +16,7 @@ from .errors import (
 )
 from .frame import (
     MissingDataError,
+    StaleDataError,
     build_closes,
     last_complete_session_date,
     read_closes,
@@ -43,6 +44,7 @@ __all__ = [
     "MissingAPIKeyError",
     "MissingDataError",
     "Quote",
+    "StaleDataError",
     "__version__",
     "build_closes",
     "get_aggregates",

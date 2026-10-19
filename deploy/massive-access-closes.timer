@@ -1,0 +1,11 @@
+[Unit]
+Description=Fetch Massive daily closes after the US close (weekdays 17:00 ET)
+
+[Timer]
+# Explicit time zone: correct regardless of the server's clock (UTC) and across DST.
+OnCalendar=Mon..Fri 17:00 America/New_York
+# Run at boot if a scheduled run was missed while the server was down.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
